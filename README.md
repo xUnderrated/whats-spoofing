@@ -12,7 +12,7 @@ Malicious individuals can use this to create issues such as:
 - In Brazil, someone could take a cellphone to a notary office to register a "Notarial Act" to create a record that could be used in legal proceedings, claiming that the original message was deleted but keeping the evidence of the "QuotedMessage."
 - Creating embarrassing situations involving public figures (famous actors, politicians, etc.)
 
-## What Meta/Facebook sad about this
+## What Meta/Facebook said about this
 
 Hi Gustavo,
 
