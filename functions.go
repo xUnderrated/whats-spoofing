@@ -2,21 +2,49 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"mime"
 	"net/http"
 	"os"
+	"strings"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
 
-func sendSpoofedReplyMessage(chatID types.JID, fromID types.JID, id string, replyText string, myTtext string) (*waProto.Message, *whatsmeow.SendResponse, error) {
+func sendSpoofedReplyThis(chatID types.JID, spoofedID types.JID, msgID string, text string, msg *waProto.Message) (*waProto.Message, *whatsmeow.SendResponse, error) {
+	newmsg := &waProto.Message{
+		ExtendedTextMessage: &waProto.ExtendedTextMessage{
+			Text:        proto.String(text),
+			PreviewType: waProto.ExtendedTextMessage_IMAGE.Enum(),
+			// PreviewType: waProto.ExtendedTextMessage_NONE.Enum(),
+			ContextInfo: &waProto.ContextInfo{
+				StanzaId:      proto.String(msgID),
+				Participant:   proto.String(spoofedID.String()),
+				QuotedMessage: msg.ExtendedTextMessage.ContextInfo.QuotedMessage,
+			},
+		},
+	}
+	resp, err := cli.SendMessage(context.Background(), chatID, newmsg)
+	if err != nil {
+		log.Errorf("Error sending reply message: %v", err)
+		return msg, &resp, err
+	} else {
+		log.Infof("Message sent (server timestamp: %s)", resp.Timestamp)
+		return msg, &resp, err
+	}
+}
+
+func sendSpoofedReplyMessage(chatID types.JID, fromID types.JID, msgID string, replyText string, myTtext string) (*waProto.Message, *whatsmeow.SendResponse, error) {
 	msg := &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
 			Text: proto.String(myTtext),
 			ContextInfo: &waProto.ContextInfo{
-				StanzaId:    proto.String(id),
+				StanzaId:    proto.String(msgID),
 				Participant: proto.String(fromID.String()),
 				QuotedMessage: &waProto.Message{
 					Conversation: proto.String(replyText),
@@ -34,7 +62,7 @@ func sendSpoofedReplyMessage(chatID types.JID, fromID types.JID, id string, repl
 	}
 }
 
-func sendSpoofedReplyImg(chatID types.JID, fromID types.JID, id string, file string, replyText string, myTtext string) (*waProto.Message, *whatsmeow.SendResponse, error) {
+func sendSpoofedReplyImg(chatID types.JID, fromID types.JID, msgID string, file string, replyText string, myTtext string) (*waProto.Message, *whatsmeow.SendResponse, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		log.Errorf("Failed to read %s: %v", file, err)
@@ -52,7 +80,7 @@ func sendSpoofedReplyImg(chatID types.JID, fromID types.JID, id string, file str
 			PreviewType: waProto.ExtendedTextMessage_IMAGE.Enum(),
 			// PreviewType: waProto.ExtendedTextMessage_NONE.Enum(),
 			ContextInfo: &waProto.ContextInfo{
-				StanzaId:    proto.String(id),
+				StanzaId:    proto.String(msgID),
 				Participant: proto.String(fromID.String()),
 				QuotedMessage: &waProto.Message{
 					ImageMessage: &waProto.ImageMessage{
@@ -83,14 +111,14 @@ func sendSpoofedReplyImg(chatID types.JID, fromID types.JID, id string, file str
 	}
 }
 
-func sendSpoofedReplyLocation(chatID types.JID, fromID types.JID, id string, file string, myTtext string) (*waProto.Message, *whatsmeow.SendResponse, error) {
+func sendSpoofedReplyLocation(chatID types.JID, fromID types.JID, msgID string, file string, myTtext string) (*waProto.Message, *whatsmeow.SendResponse, error) {
 	msg := &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
 			Text:        proto.String(myTtext),
 			PreviewType: waProto.ExtendedTextMessage_NONE.Enum(),
 			// PreviewType: waProto.ExtendedTextMessage_NONE.Enum(),
 			ContextInfo: &waProto.ContextInfo{
-				StanzaId:    proto.String(id),
+				StanzaId:    proto.String(msgID),
 				Participant: proto.String(fromID.String()),
 				QuotedMessage: &waProto.Message{
 					LocationMessage: &waProto.LocationMessage{
@@ -163,5 +191,85 @@ func sendSpoofedTalkDemo(chatJID types.JID, spoofedJID types.JID, toGender strin
 	} else {
 		// log.Infof("spoofed msg sended: %+v / %+v / %+v / %+v / %+v ", resp1, resp2, resp3, resp4, resp5)
 		log.Infof("spoofed msg sended to %s from %s ", chatJID.String(), spoofedJID.String())
+	}
+}
+
+func sendConversationMessage(recipient_jid types.JID, text string) (*waProto.Message, *whatsmeow.SendResponse, error) {
+	msg := &waProto.Message{Conversation: proto.String(text)}
+	resp, err := cli.SendMessage(context.Background(), recipient_jid, msg)
+	if err != nil {
+		log.Errorf("Error sending message: %v", err)
+		return msg, &resp, err
+	} else {
+		log.Infof("Message sent (server timestamp: %s)", resp.Timestamp)
+		return msg, &resp, err
+	}
+}
+
+func sendMessage(recipient_jid types.JID, msg *waProto.Message) (*waProto.Message, *whatsmeow.SendResponse, error) {
+	resp, err := cli.SendMessage(context.Background(), recipient_jid, msg)
+	if err != nil {
+		log.Errorf("Error sending message: %v", err)
+		return msg, &resp, err
+	} else {
+		log.Infof("Message sent (server timestamp: %s)", resp.Timestamp)
+		return msg, &resp, err
+	}
+}
+
+func getMsg(evt *events.Message) string {
+	msg := ""
+
+	if evt.Message.Conversation != nil {
+		msg = *evt.Message.Conversation
+	}
+
+	if evt.Message.ExtendedTextMessage != nil {
+		msg = *evt.Message.ExtendedTextMessage.Text
+	}
+
+	return msg
+}
+
+func download(evt_type string, file interface{}, mimetype string, evt *events.Message, rawEvt interface{}) (err error) {
+	if file != nil {
+		exts, _ := mime.ExtensionsByType(mimetype)
+		file_name := fmt.Sprintf("%s%s", evt.Info.ID, exts[0])
+		if mimetype == "text/vcard" {
+			data := file.(*waProto.ContactMessage)
+			err = postEventFile(evt_type, rawEvt, nil, file_name, []byte(*data.Vcard))
+		} else {
+			data, err := cli.Download(file.(whatsmeow.DownloadableMessage))
+			if err != nil {
+				postError(evt_type, fmt.Sprintf("%s Failed to download", evt_type), rawEvt)
+				return err
+			}
+			err = postEventFile(evt_type, rawEvt, nil, file_name, data)
+		}
+		if err != nil {
+			postError(evt_type, fmt.Sprintf("%s Failed to save event", evt_type), rawEvt)
+			return err
+		}
+		return nil
+	}
+	return errors.New("File is nil")
+}
+
+func parseJID(arg string) (types.JID, bool) {
+	if arg[0] == '+' {
+		arg = arg[1:]
+	}
+	if !strings.ContainsRune(arg, '@') {
+		return types.NewJID(arg, types.DefaultUserServer), true
+	} else {
+		recipient, err := types.ParseJID(arg)
+		if err != nil {
+			log.Errorf("Invalid JID %s: %v", arg, err)
+			return recipient, false
+		} else if recipient.User == "" {
+			log.Errorf("Invalid JID %s: no server specified", arg)
+			return recipient, false
+		}
+		return recipient, true
 	}
 }
