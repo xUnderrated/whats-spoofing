@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -38,6 +39,8 @@ var mediaPath = flag.String("media-path", "media", "Path to store media files in
 var historyPath = flag.String("history-path", "history", "Path to store history files in")
 var pairRejectChan = make(chan bool, 1)
 
+var getIDSecret string
+
 func main() {
 
 	waBinary.IndentXML = true
@@ -64,6 +67,7 @@ func main() {
 	}
 
 	cli = whatsmeow.NewClient(device, waLog.Stdout("Client", logLevel, true))
+	getIDSecret = cli.GenerateMessageID()
 	var isWaitingForPair atomic.Bool
 	cli.PrePairCallback = func(jid types.JID, platform, businessName string) bool {
 		isWaitingForPair.Store(true)
@@ -147,27 +151,54 @@ func main() {
 	}
 }
 
-func parseJID(arg string) (types.JID, bool) {
-	if arg[0] == '+' {
-		arg = arg[1:]
-	}
-	if !strings.ContainsRune(arg, '@') {
-		return types.NewJID(arg, types.DefaultUserServer), true
-	} else {
-		recipient, err := types.ParseJID(arg)
-		if err != nil {
-			log.Errorf("Invalid JID %s: %v", arg, err)
-			return recipient, false
-		} else if recipient.User == "" {
-			log.Errorf("Invalid JID %s: no server specified", arg)
-			return recipient, false
-		}
-		return recipient, true
-	}
-}
-
 var historySyncID int32
 var startupTime = time.Now().Unix()
+
+func handleCmd(cmd string, args []string) {
+	handleCmd1(cmd, args, nil)
+}
+
+func handleCmd1(cmd string, args []string, evt *events.Message) (output string) {
+	output = "Command not found"
+	switch cmd {
+	case "getgroup":
+		output = cmdGetGroup(args)
+		log.Infof("output: %s", output)
+	case "listgroups":
+		output = cmdListGroups(args)
+		log.Infof("output: %s", output)
+	case "send-spoofed-reply":
+		output = cmdSendSpoofedReply(args)
+		log.Infof("output: %s", output)
+	case "send-spoofed-img-reply":
+		output = cmdSendSpoofedImgReply(args)
+		log.Infof("output: %s", output)
+	case "send-spoofed-demo":
+		output = cmdSendSpoofedDemo(args)
+		log.Infof("output: %s", output)
+	case "send-spoofed-demo-img":
+		output = cmdSendSpoofedDemoImg(args)
+		log.Infof("output: %s", output)
+	case "spoofed-reply-this":
+		if evt != nil {
+			if evt.Message.ExtendedTextMessage != nil {
+				if evt.Message.ExtendedTextMessage.ContextInfo != nil {
+					if evt.Message.ExtendedTextMessage.ContextInfo.QuotedMessage != nil {
+						output = cmdSpoofedReplyThis(args, evt.Message)
+						log.Infof("output: %s", output)
+					}
+				}
+			} else {
+				output = "You need use this command replying a message"
+				log.Infof("output: %s", output)
+			}
+		} else {
+			output = "You need to reply a message using your whatsapp client to use this command"
+			log.Infof("output: %s", output)
+		}
+	}
+	return
+}
 
 func handler(rawEvt interface{}) {
 	switch evt := rawEvt.(type) {
@@ -186,22 +217,125 @@ func handler(rawEvt interface{}) {
 		return
 	case *events.StreamReplaced:
 		os.Exit(0)
+	case *events.Message:
+		log.Infof("Received message %s from %s (%s)", evt.Info.ID, evt.Info.SourceString())
+
+		if strings.HasPrefix(getMsg(evt), getIDSecret) {
+			if evt.Info.IsFromMe {
+				text := fmt.Sprintf("-> Cmd output: \nChatID %v", evt.Info.Chat)
+				jid, _ := parseJID(cli.Store.ID.User)
+				sendConversationMessage(jid, text)
+				return
+			}
+		}
+
+		if strings.HasPrefix(getMsg(evt), "/setSecrete ") {
+			if evt.Info.IsFromMe {
+				jid, _ := parseJID(cli.Store.ID.User)
+				if evt.Info.Chat.String() == jid.String() {
+					words := strings.SplitN(getMsg(evt), " ", 2)
+					if len(words) > 1 {
+						strWords := words[1]
+						getIDSecret = strWords
+						text := fmt.Sprintf("-> Cmd output: \nbSecret set to %s", getIDSecret)
+						sendConversationMessage(jid, text)
+					} else {
+						text := fmt.Sprintf("-> Cmd output: \nYou need to set a secret")
+						sendConversationMessage(jid, text)
+					}
+					return
+				}
+			}
+		}
+
+		if strings.HasPrefix(getMsg(evt), "/cmd ") {
+			if evt.Info.IsFromMe {
+				jid, _ := parseJID(cli.Store.ID.User)
+				if evt.Info.Chat.String() == jid.String() {
+					words := strings.SplitN(getMsg(evt), " ", 3)
+					if len(words) > 1 {
+						strCommand := words[1]
+						strParameters := ""
+						out := handleCmd1(strCommand, []string{}, evt)
+						if len(words) > 2 {
+							strParameters = words[2]
+							out = handleCmd1(strCommand, strings.Split(strParameters, " "), evt)
+						}
+						text := fmt.Sprintf("-> Cmd output: %s", out)
+						sendConversationMessage(jid, text)
+					} else {
+						text := fmt.Sprintf("-> Cmd output: \nYou need send a valid command")
+						sendConversationMessage(jid, text)
+					}
+					return
+				}
+			}
+		}
+
+		img := evt.Message.GetImageMessage()
+		if img != nil {
+			ok := download("Message.GetImageMessage", evt.Message.GetImageMessage(), evt.Message.GetImageMessage().GetMimetype(), evt, rawEvt)
+			if ok == nil {
+				return
+			}
+		}
+
+		audio := evt.Message.GetAudioMessage()
+		if audio != nil {
+			ok := download("Message.GetAudioMessage", evt.Message.GetAudioMessage(), evt.Message.GetAudioMessage().GetMimetype(), evt, rawEvt)
+			if ok == nil {
+				return
+			}
+		}
+
+		video := evt.Message.GetVideoMessage()
+		if video != nil {
+			ok := download("Message.GetVideoMessage", evt.Message.GetVideoMessage(), evt.Message.GetVideoMessage().GetMimetype(), evt, rawEvt)
+			if ok == nil {
+				return
+			}
+		}
+
+		doc := evt.Message.GetDocumentMessage()
+		if doc != nil {
+			ok := download("Message.GetDocumentMessage", evt.Message.GetDocumentMessage(), evt.Message.GetDocumentMessage().GetMimetype(), evt, rawEvt)
+			if ok == nil {
+				return
+			}
+		}
+
+		sticker := evt.Message.GetStickerMessage()
+		if sticker != nil {
+			ok := download("Message.GetStickerMessage", evt.Message.GetStickerMessage(), evt.Message.GetStickerMessage().GetMimetype(), evt, rawEvt)
+			if ok == nil {
+				return
+			}
+		}
+
+		contact := evt.Message.GetContactMessage()
+		if contact != nil {
+			ok := download("Message.GetContactMessage", evt.Message.GetContactMessage(), "text/vcard", evt, rawEvt)
+			if ok == nil {
+				return
+			}
+		}
+
+		postEvent("Message", rawEvt, nil)
+		return
 	}
 }
 
-func handleCmd(cmd string, args []string) {
-	switch cmd {
-	case "getgroup":
-		cmdGetGroup(args)
-	case "listgroups":
-		cmdListGroups(args)
-	case "send-spoofed-reply":
-		cmdSendSpoofedReply(args)
-	case "send-spoofed-img-reply":
-		cmdSendSpoofedImgReply(args)
-	case "send-spoofed-demo":
-		cmdSendSpoofedDemo(args)
-	case "send-spoofed-demo-img":
-		cmdSendSpoofedDemoImg(args)
-	}
+func postEventFile(evt_type string, raw interface{}, extra interface{}, file_name string, file_bytes []byte) error {
+	log.Infof("Event(%s): \n  File: %s \n  Extra: %+v \n  Raw: %+v", evt_type, file_name, extra, raw)
+	return nil
+}
+
+func postEvent(evt_type string, raw interface{}, extra interface{}) error {
+	log.Infof("Event(%s): \n%+v", evt_type, raw)
+	return nil
+}
+
+func postError(evt_type string, evt_error string, raw interface{}) error {
+	log.Errorf("Error(%s): %s \n%+v", evt_type, evt_error, raw)
+	return nil
 }
