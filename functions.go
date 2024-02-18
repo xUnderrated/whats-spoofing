@@ -175,7 +175,15 @@ func sendSpoofedTalkDemo(chatJID types.JID, spoofedJID types.JID, toGender strin
 	msgmap["en"]["girl"] = make(map[int]string)
 	msgmap["en"]["girl"][0] = "Last night was wonderful, come more often when my husband isn't here..."
 	msgmap["en"]["girl"][1] = "All yours!"
-
+        msgmap["ar"] = make(map[string]map[int]string)
+	msgmap["ar"]["generic"] = make(map[int]string)
+	msgmap["ar"]["generic"][0] = "أهلا..."
+	msgmap["ar"]["generic"][1] = "مرحبا..."
+	msgmap["ar"]["generic"][2] = "❤️❤️❤️❤️❤️"
+	msgmap["ar"]["generic"][3] = "كيف حالك؟..."
+	msgmap["ar"]["generic"][4] = "أين أنت؟..."
+	msgmap["ar"]["generic"][5] = "لمادا لا تجيب؟..."
+	msgmap["ar"]["generic"][6] = "ما بك؟..."
 	_, err := cli.SendMessage(context.Background(), chatJID, &waProto.Message{Conversation: proto.String(msgmap[language]["generic"][0])})
 	_, err = cli.SendMessage(context.Background(), chatJID, &waProto.Message{Conversation: proto.String(msgmap[language]["generic"][1])})
 	_, _, err = sendSpoofedReplyMessage(chatJID, spoofedJID, cli.GenerateMessageID(), msgmap[language][toGender][0], msgmap[language]["generic"][2])
